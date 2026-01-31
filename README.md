@@ -10,6 +10,18 @@ Local agent CLI for file ops, shell commands, and Git automation using OpenAI.
 npm install
 ```
 
+To run `darell` globally during development:
+
+```bash
+npm link
+```
+
+You must build before linking or running the global binary:
+
+```bash
+npm run build
+```
+
 ## Configure
 
 ### Option A: Configure (Ink)
@@ -61,4 +73,7 @@ Options:
 
 - The agent requests approval for each action unless `--yes` is provided.
 - Prefer project-based keys and avoid sharing personal API keys.
+- Running shell commands or file mutations can be destructive; review each approval carefully.
+- `delete_file`, `write_file`, `append_file`, `replace_in_file`, and `apply_patch` modify data and should be used cautiously.
+- `--yes` disables per-action confirmation and is not recommended for sensitive workspaces.
 # darell
