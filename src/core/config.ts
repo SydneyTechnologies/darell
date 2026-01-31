@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import type { ModelPricing } from './pricing.js';
 
 export type DarellConfig = {
   apiKey?: string;
@@ -9,6 +10,7 @@ export type DarellConfig = {
   model?: string;
   autoApprove?: boolean;
   allowOutsideRoot?: boolean;
+  pricing?: Record<string, ModelPricing>;
 };
 
 export function getConfigDir(): string {

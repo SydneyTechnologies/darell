@@ -1,6 +1,7 @@
 import { z } from "zod";
 import os from "node:os";
 import type { DarellConfig } from "./config.js";
+import { summarizeUsage, type UsageSummary } from "./pricing.js";
 import { confirmAction } from "./confirm.js";
 import { createClient, resolveModel } from "./openai.js";
 import {
@@ -117,10 +118,16 @@ const PlanSchema = z.object({
 export type AgentAction = z.infer<typeof ActionSchema>;
 export type AgentPlan = z.infer<typeof PlanSchema>;
 
-export type AgentEvent = {
-  type: "plan" | "action" | "result" | "error" | "info";
-  message: string;
-};
+export type AgentEvent =
+  | {
+      type: "plan" | "action" | "result" | "error" | "info";
+      message: string;
+    }
+  | {
+      type: "usage";
+      message: string;
+      usage: UsageSummary & { phase: "plan" | "followup" | "run" };
+    };
 
 export type RunAgentOptions = {
   task: string;
@@ -155,10 +162,22 @@ function buildPrompt(root: string, allowOutsideRoot?: boolean): string {
   ].join("\n");
 }
 
+function formatUsageMessage(usage: UsageSummary & { phase: "plan" | "followup" | "run" }): string {
+  const cost = usage.cost !== undefined ? `$${usage.cost.toFixed(6)}` : "n/a";
+  return `Usage (${usage.phase}): in ${usage.promptTokens}, out ${usage.completionTokens}, total ${usage.totalTokens}, cost ${cost}`;
+}
+
 export async function runAgent(options: RunAgentOptions): Promise<void> {
   const client = createClient(options.config);
   const model = resolveModel(options.config);
   const executionLog: string[] = [];
+  const runUsage: UsageSummary = {
+    model,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    cachedTokens: 0,
+  };
 
   emit(options, { type: "info", message: `Using model ${model}` });
 
@@ -176,6 +195,23 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
     response_format: { type: "json_object" },
     temperature: 0,
   });
+
+  const initialUsage = summarizeUsage(model, response.usage, options.config.pricing);
+  if (initialUsage) {
+    const usageWithPhase = { ...initialUsage, phase: "plan" as const };
+    emit(options, {
+      type: "usage",
+      message: formatUsageMessage(usageWithPhase),
+      usage: usageWithPhase,
+    });
+    runUsage.promptTokens += initialUsage.promptTokens;
+    runUsage.completionTokens += initialUsage.completionTokens;
+    runUsage.totalTokens += initialUsage.totalTokens;
+    runUsage.cachedTokens += initialUsage.cachedTokens;
+    if (typeof initialUsage.cost === "number") {
+      runUsage.cost = (runUsage.cost ?? 0) + initialUsage.cost;
+    }
+  }
 
   const raw = response.choices[0]?.message?.content ?? "";
   let plan: AgentPlan;
@@ -303,9 +339,34 @@ export async function runAgent(options: RunAgentOptions): Promise<void> {
       ],
       temperature: 0.2,
     });
+    const followUsage = summarizeUsage(model, followUp.usage, options.config.pricing);
+    if (followUsage) {
+      const usageWithPhase = { ...followUsage, phase: "followup" as const };
+      emit(options, {
+        type: "usage",
+        message: formatUsageMessage(usageWithPhase),
+        usage: usageWithPhase,
+      });
+      runUsage.promptTokens += followUsage.promptTokens;
+      runUsage.completionTokens += followUsage.completionTokens;
+      runUsage.totalTokens += followUsage.totalTokens;
+      runUsage.cachedTokens += followUsage.cachedTokens;
+      if (typeof followUsage.cost === "number") {
+        runUsage.cost = (runUsage.cost ?? 0) + followUsage.cost;
+      }
+    }
     const summary = followUp.choices[0]?.message?.content?.trim();
     if (summary) {
       emit(options, { type: "result", message: summary });
     }
+  }
+
+  if (runUsage.totalTokens > 0) {
+    const usageWithPhase = { ...runUsage, phase: "run" as const };
+    emit(options, {
+      type: "usage",
+      message: formatUsageMessage(usageWithPhase),
+      usage: usageWithPhase,
+    });
   }
 }

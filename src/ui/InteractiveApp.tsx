@@ -46,6 +46,8 @@ export function InteractiveApp({ config, onExit }: InteractiveAppProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'system', content: SYSTEM_PROMPT }
   ]);
+  const [lastCost, setLastCost] = useState<number | null>(null);
+  const [sessionCost, setSessionCost] = useState<number | null>(null);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,8 +57,27 @@ export function InteractiveApp({ config, onExit }: InteractiveAppProps) {
 
   const visibleMessages = messages.filter((message) => message.role !== 'system');
 
+  const formatUsd = (value: number | null) => {
+    if (value === null || Number.isNaN(value)) return 'n/a';
+    if (value === 0) return '$0.00';
+    if (value < 0.01) return `$${value.toFixed(6)}`;
+    if (value < 1) return `$${value.toFixed(4)}`;
+    return `$${value.toFixed(2)}`;
+  };
+
   const handleEvent = (event: AgentEvent) => {
     if (event.type === 'info' || event.type === 'plan') return;
+    if (event.type === 'usage') {
+      if (event.usage.phase === 'run') {
+        const runCost =
+          'cost' in event.usage ? (event.usage as { cost?: number }).cost : undefined;
+        setLastCost(typeof runCost === 'number' ? runCost : null);
+        if (typeof runCost === 'number') {
+          setSessionCost((prev) => (prev === null ? runCost : prev + runCost));
+        }
+      }
+      return;
+    }
     if (event.type === 'action') {
       setMessages((prev) => [
         ...prev,
@@ -144,12 +165,11 @@ export function InteractiveApp({ config, onExit }: InteractiveAppProps) {
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box
-        key="header"
         width="100%"
         flexDirection="column"
         borderStyle="round"
         borderColor="gray"
-        paddingX={10}
+        paddingX={2}
         paddingY={1}
         marginBottom={1}
       >
@@ -207,10 +227,12 @@ export function InteractiveApp({ config, onExit }: InteractiveAppProps) {
       </Box>
 
       <Box flexDirection="row" justifyContent="space-between" paddingTop={1}>
-        <Text color="gray">OpenAI {modelName}</Text>
+        <Text color="gray">
+          OpenAI {modelName} · last {formatUsd(lastCost)} · session {formatUsd(sessionCost)}
+        </Text>
         <Text color="gray">esc interrupt</Text>
       </Box>
       {busy ? <Text color="blue">Thinking…</Text> : null}
-    </Box >
+    </Box>
   );
 }
