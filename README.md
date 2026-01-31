@@ -13,13 +13,13 @@ npm install
 To run `darell` globally during development:
 
 ```bash
-npm link
+npm run build
 ```
 
-You must build before linking or running the global binary:
+Then link the global binary:
 
 ```bash
-npm run build
+npm link
 ```
 
 ## Configure
@@ -38,7 +38,8 @@ Model selection is populated from the OpenAI models API during configuration.
 export OPENAI_API_KEY="..."
 export DARELL_MODEL="gpt-4o-mini"
 ```
-`darell configure` writes to `~/.darell/config`.
+
+`darell configure` writes to `~/.darell/config`. This is in no way a secure way to do this but since it is mostly a local configuration idk use at your own risk.
 
 You can find/create API keys in the OpenAI developer platform.
 
@@ -76,4 +77,5 @@ Options:
 - Running shell commands or file mutations can be destructive; review each approval carefully.
 - `delete_file`, `write_file`, `append_file`, `replace_in_file`, and `apply_patch` modify data and should be used cautiously.
 - `--yes` disables per-action confirmation and is not recommended for sensitive workspaces.
+
 # darell
