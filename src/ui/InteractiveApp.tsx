@@ -120,6 +120,16 @@ export function InteractiveApp({ config, onExit }: InteractiveAppProps) {
       setInput('');
       return;
     }
+    if (trimmed === '/clear') {
+      setMessages([{ role: 'system', content: SYSTEM_PROMPT }]);
+      setError(null);
+      setPending(null);
+      setConfirmValue('');
+      setLastCost(null);
+      setSessionCost(null);
+      setInput('');
+      return;
+    }
     const nextUser: ChatMessage = { role: 'user', content: trimmed };
     setInput('');
     setError(null);
