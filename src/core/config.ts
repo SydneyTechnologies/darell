@@ -8,6 +8,7 @@ export type DarellConfig = {
   organization?: string;
   model?: string;
   autoApprove?: boolean;
+  allowOutsideRoot?: boolean;
 };
 
 export function getConfigDir(): string {

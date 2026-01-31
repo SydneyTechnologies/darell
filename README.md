@@ -77,5 +77,6 @@ Options:
 - Running shell commands or file mutations can be destructive; review each approval carefully.
 - `delete_file`, `write_file`, `append_file`, `replace_in_file`, and `apply_patch` modify data and should be used cautiously.
 - `--yes` disables per-action confirmation and is not recommended for sensitive workspaces.
+- By default, actions are limited to the workspace root. You can allow outside-root access in `darell configure`.
 
 # darell

@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp } from 'ink';
 import TextInput from 'ink-text-input';
 import type { DarellConfig } from '../core/config.js';
-import { createClient, resolveModel } from '../core/openai.js';
+import { runAgent, type AgentAction, type AgentEvent } from '../core/agent.js';
+import os from 'node:os';
+import { resolveModel } from '../core/openai.js';
 
 export type InteractiveAppProps = {
   config: DarellConfig;
@@ -12,64 +14,126 @@ export type InteractiveAppProps = {
 type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  kind?: 'action' | 'result' | 'error' | 'text';
 };
 
 const SYSTEM_PROMPT = [
   'You are Darell, an interactive CLI assistant.',
+  `Operating system: ${os.platform()} ${os.release()} (${os.arch()}).`,
   'Be concise and helpful. Ask clarifying questions when needed.'
 ].join(' ');
 
+const TOOL_LIST = [
+  'read_file',
+  'write_file',
+  'append_file',
+  'create_file',
+  'delete_file',
+  'replace_in_file',
+  'list_dir',
+  'file_info',
+  'search_files',
+  'apply_patch',
+  'move_file',
+  'rename_file',
+  'shell_command',
+  'git'
+];
+
 export function InteractiveApp({ config, onExit }: InteractiveAppProps) {
   const { exit } = useApp();
+  const modelName = useMemo(() => resolveModel(config), [config]);
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: 'system', content: SYSTEM_PROMPT }
   ]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const clientState = useMemo(() => {
-    try {
-      return { client: createClient(config), error: null as string | null };
-    } catch (err) {
-      return { client: null, error: String(err) };
-    }
-  }, [config]);
-
-  useEffect(() => {
-    if (clientState.error) setError(clientState.error);
-  }, [clientState.error]);
+  const [pending, setPending] = useState<AgentAction | null>(null);
+  const [confirmValue, setConfirmValue] = useState('');
+  const resolverRef = useRef<((value: boolean) => void) | null>(null);
 
   const visibleMessages = messages.filter((message) => message.role !== 'system');
 
-  async function handleSubmit() {
-    if (!input.trim() || busy) return;
-    if (input.trim() === '/exit') {
-      onExit?.();
-      exit();
+  const handleEvent = (event: AgentEvent) => {
+    if (event.type === 'info' || event.type === 'plan') return;
+    if (event.type === 'action') {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `→ ${event.message}`, kind: 'action' }
+      ]);
       return;
     }
-    const nextUser: ChatMessage = { role: 'user', content: input.trim() };
+    if (event.type === 'error') {
+      setMessages((prev) => [...prev, { role: 'assistant', content: event.message, kind: 'error' }]);
+      return;
+    }
+    setMessages((prev) => [...prev, { role: 'assistant', content: event.message, kind: 'result' }]);
+  };
+
+  async function handleSubmit() {
+    if (!input.trim() || busy) return;
+    const trimmed = input.trim();
+    if (trimmed === '/exit') {
+      onExit?.();
+      exit();
+
+      return;
+    }
+    if (trimmed === '/tools') {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: `Available tools: ${TOOL_LIST.join(', ')}` }
+      ]);
+      setInput('');
+      return;
+    }
+    if (trimmed === '/help') {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: 'Commands: /tools, /exit, /help'
+        }
+      ]);
+      setInput('');
+      return;
+    }
+    const nextUser: ChatMessage = { role: 'user', content: trimmed };
     setInput('');
     setError(null);
     setBusy(true);
 
-    const nextMessages = [...messages, nextUser];
-    setMessages(nextMessages);
-
-    if (!clientState.client) {
-      setBusy(false);
-      return;
-    }
-    const client = clientState.client;
+    setMessages((prev) => [...prev, nextUser]);
 
     try {
-      const response = await client.chat.completions.create({
-        model: resolveModel(config),
-        messages: nextMessages,
-        temperature: 0.3
+      const history = [...messages, nextUser]
+        .filter(
+          (message) =>
+            message.role === 'user' ||
+            (message.role === 'assistant' &&
+              (message.kind === 'result' || message.kind === 'text'))
+        )
+        .map((message) => ({
+          role: message.role as 'user' | 'assistant',
+          content: message.content
+        }));
+
+      await runAgent({
+        task: trimmed,
+        root: process.cwd(),
+        config,
+        autoApprove: config.autoApprove,
+        history,
+        confirm: (action) =>
+          new Promise((resolve) => {
+            resolverRef.current = resolve;
+            setPending(action);
+            setConfirmValue('');
+            setBusy(false);
+          }),
+        onEvent: handleEvent
       });
-      const content = response.choices[0]?.message?.content ?? '';
-      setMessages((prev) => [...prev, { role: 'assistant', content }]);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -78,29 +142,75 @@ export function InteractiveApp({ config, onExit }: InteractiveAppProps) {
   }
 
   return (
-    <Box flexDirection="column" gap={1}>
-      <Box borderStyle="round" borderColor="cyan" paddingX={1}>
-        <Text color="cyan">Darell Interactive</Text>
-        <Text color="gray"> - type /exit to quit</Text>
+    <Box flexDirection="column" paddingX={2} paddingY={1}>
+      <Box
+        key="header"
+        width="100%"
+        flexDirection="column"
+        borderStyle="round"
+        borderColor="gray"
+        paddingX={10}
+        paddingY={1}
+        marginBottom={1}
+      >
+        <Text color="white"># Darell Interactive</Text>
       </Box>
-      {error ? <Text color="red">{error}</Text> : null}
-      <Box flexDirection="column">
+      <Box width="100%" flexDirection="column" gap={1} marginBottom={1}>
         {visibleMessages.map((message, index) => (
-          <Box key={`${message.role}-${index}`} flexDirection="column" marginBottom={1}>
-            <Text color={message.role === 'user' ? 'green' : 'magenta'}>
-              {message.role === 'user' ? 'You' : 'Darell'}:
-            </Text>
-            <Text color={message.role === 'user' ? 'green' : 'white'}>{message.content}</Text>
+          <Box key={`${message.role}-${index}`} flexDirection="column" gap={1}>
+            <Text color="gray">{message.role === 'user' ? 'You' : 'Darell'}</Text>
+            <Text>{message.content}</Text>
           </Box>
         ))}
       </Box>
-      <TextInput
-        value={input}
-        onChange={setInput}
-        onSubmit={handleSubmit}
-        placeholder={busy ? 'Thinking...' : 'Type a message'}
-      />
-      {busy ? <Text dimColor>Waiting for response...</Text> : null}
-    </Box>
+
+      {error ? <Text color="red">{error}</Text> : null}
+      {pending ? <Text color="yellow">Approve {pending.type}? Type y or n and press Enter.</Text> : null}
+
+      <Box borderStyle="round" borderColor="gray" paddingX={2} paddingY={1} width="100%">
+        {pending ? (
+          <Box>
+            <Text color="gray">{'>'} </Text>
+            <TextInput
+              value={confirmValue}
+              onChange={setConfirmValue}
+              onSubmit={(value) => {
+                const answer = value.trim().toLowerCase();
+                if (answer.startsWith('y')) {
+                  setBusy(true);
+                  resolverRef.current?.(true);
+                } else if (answer.startsWith('n')) {
+                  setBusy(true);
+                  resolverRef.current?.(false);
+                } else {
+                  setError('Please enter y or n.');
+                  return;
+                }
+                resolverRef.current = null;
+                setPending(null);
+                setConfirmValue('');
+              }}
+              placeholder="y or n"
+            />
+          </Box>
+        ) : (
+          <Box>
+            <Text color="gray">{'>'} </Text>
+            <TextInput
+              value={input}
+              onChange={setInput}
+              onSubmit={handleSubmit}
+              placeholder={busy ? 'Thinking...' : 'Type a message'}
+            />
+          </Box>
+        )}
+      </Box>
+
+      <Box flexDirection="row" justifyContent="space-between" paddingTop={1}>
+        <Text color="gray">OpenAI {modelName}</Text>
+        <Text color="gray">esc interrupt</Text>
+      </Box>
+      {busy ? <Text color="blue">Thinking…</Text> : null}
+    </Box >
   );
 }

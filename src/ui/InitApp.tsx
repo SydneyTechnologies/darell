@@ -15,7 +15,8 @@ const fields: Field[] = [
   { label: 'Base URL (optional)', key: 'baseUrl', placeholder: 'https://api.openai.com/v1' },
   { label: 'Organization ID (optional)', key: 'organization' },
   { label: 'Default model (optional)', key: 'model', placeholder: 'gpt-4o-mini' },
-  { label: 'Auto-approve actions? (true/false)', key: 'autoApprove' }
+  { label: 'Auto-approve actions? (true/false)', key: 'autoApprove' },
+  { label: 'Allow actions outside root? (true/false)', key: 'allowOutsideRoot' }
 ];
 
 export function InitApp({ onComplete }: { onComplete?: () => void }) {
